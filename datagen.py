@@ -94,7 +94,7 @@ class JSONDataset(Dataset):
         return len(self.data)
 
 
-class SiameseDataset(Dataset):  # todo: refactory nightmare
+class SiameseDataset(Dataset):
     def __init__(self, data):
         self.data = data
 
@@ -104,7 +104,17 @@ class SiameseDataset(Dataset):  # todo: refactory nightmare
     def __getitem__(self, index):
         img, text, label_1 = self.data[index]
         label_2 = label_1
-        if random.random() > 0.5:  # todo: try triplet output with self.data.data[self.data.data['label']==label_1]
+        if random.random() > 0.5:
             _, text, label_2 = self.data[random.randint(0, len(self.data)-1)]
         return img, text, (label_1, label_2)
 
+
+class TripLetDataset(SiameseDataset):
+    def __getitem__(self, index):
+        img, text, label_1 = self.data[index]
+        neg = self.data.data[self.data.data['label'] != label_1]
+        row = neg.sample(1).iloc[0]
+        if row['text'] not in self.data.features:
+            txt_vector = torch.load(os.path.join(self.data.folder, self.data.stage, row['file']), map_location='cpu')
+            self.data.features[row['text']] = txt_vector
+        return img, text, self.data.features[row['text']]

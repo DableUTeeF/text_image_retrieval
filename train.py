@@ -1,5 +1,5 @@
 from models.matching import ImageModel
-from datagen import JSONDataset, split, SiameseDataset
+from datagen import JSONDataset, split, TripLetDataset, SiameseDataset
 import argparse
 from sentence_transformers import SentenceTransformer
 import torch
@@ -69,7 +69,7 @@ if __name__ == '__main__':
     train_dataset = JSONDataset(args, train_list, text_model, regen=args.regen, train=True)  # args, data, regen, train
     val_dataset = JSONDataset(args, val_list, text_model, regen=args.regen, train=False)
 
-    train_dataset = SiameseDataset(train_dataset)  # todo: refactory nightmare
+    train_dataset = TripLetDataset(train_dataset)  # todo: refactory nightmare
     val_dataset = SiameseDataset(val_dataset)
 
     train_loader = DataLoader(train_dataset,
@@ -91,7 +91,7 @@ if __name__ == '__main__':
                                               after_scheduler=scheduler_steplr)
     mse = nn.MSELoss()
     identity = nn.Identity()
-    criterion = ContrastiveLoss()
+    criterion = nn.TripletMarginLoss(margin=1.0, p=2)
     train_steps = 0
     test_steps = 0
     writer = SummaryWriter(log_dir=f'{args.log_dir}/{folder}')
@@ -99,11 +99,12 @@ if __name__ == '__main__':
         print('Epoch:', epoch + 1)
         progbar = tf.keras.utils.Progbar(len(train_loader))
         image_model.train()
-        for idx, (image, text, labels) in enumerate(train_loader):
+        for idx, (image, positive, negative) in enumerate(train_loader):
             image = image.to(args.device)
-            text = text.to(args.device)
+            positive = positive.to(args.device)
+            negative = negative.to(args.device)
             image_feature = image_model(image)
-            loss = criterion([text, image_feature], (labels[0] == labels[1]).view(-1).to(args.device).float())
+            loss = criterion(image_feature, positive, negative)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -112,7 +113,6 @@ if __name__ == '__main__':
             writer.add_scalar('Loss/train', loss.cpu().detach().numpy(), train_steps)
             train_steps += 1
             progbar.update(idx + 1, printlog)
-        pd.DataFrame(train_log).to_csv(f'{args.log_dir}/{folder}/train.csv', index=True)
         scheduler_warmup.step()
         progbar = tf.keras.utils.Progbar(len(val_loader))
         query_feature = torch.empty((0, text_model[1].pooling_output_dimension), dtype=torch.float32)
