@@ -9,6 +9,9 @@ import random
 import torch
 import pandas as pd
 import tensorflow as tf
+from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from timm.data.transforms import _str_to_pil_interpolation as _pil_interp
+from timm.data import create_transform
 
 
 def split(args):
@@ -30,6 +33,31 @@ def split(args):
 
     return train, val
 
+def build_transform(is_train, args):
+    if is_train:
+        transform = create_transform(
+            input_size=384,
+            is_training=True,
+            color_jitter=0.4,
+            auto_augment='rand-m9-mstd0.5-inc1',
+            re_prob=0.25,
+            re_mode='pixel',
+            re_count=1,
+            interpolation='bicubic',
+        )
+        transform.transforms[0] = transforms.Compose([
+            transforms.Resize((args.height, args.width), interpolation=Image.BICUBIC),
+            transforms.Pad(10),
+            transforms.RandomCrop((args.height, args.width)),
+        ])
+        return transform
+
+    t = [transforms.Resize((args.height, args.width), interpolation=Image.BICUBIC),
+         transforms.ToTensor(),
+         transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)]
+
+    return transforms.Compose(t)
+
 
 class JSONDataset(Dataset):
     def __init__(self, args, data, text_model, regen, train):
@@ -38,21 +66,7 @@ class JSONDataset(Dataset):
         self.folder = os.path.join(args.text_vector_path, args.text_model)
         self.stage = 'train' if train else 'val'
         self.text_model = text_model
-        if self.train:
-            self.transform = transforms.Compose([
-                transforms.Resize((args.height, args.width), interpolation=3),
-                transforms.Pad(10),
-                transforms.RandomCrop((args.height, args.width)),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-            ])
-        else:
-            self.transform = transforms.Compose([
-                transforms.Resize((args.height, args.width), interpolation=3),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-            ])
+        self.transform = build_transform(train, args)
         self.features = {}
         if regen:
             self.data = functools.reduce(lambda a, b: a + b, data)

@@ -3,12 +3,13 @@ from datagen import JSONDataset, split, TripLetDataset, SiameseDataset
 import argparse
 from sentence_transformers import SentenceTransformer
 import torch
-from utils import GradualWarmupScheduler, test_map
+from utils import test_map
 import tensorflow as tf
 from torch.utils.data import DataLoader
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 import os
+from timm.scheduler.cosine_lr import CosineLRScheduler
 
 
 class ContrastiveLoss(torch.nn.Module):
@@ -34,8 +35,8 @@ if __name__ == '__main__':
     parser.add_argument('--log_dir', type=str, default='./log')
 
     # optimizer
-    parser.add_argument('--lr', type=float, default=.003)
-    parser.add_argument('--wd', type=float, default=0.00004)
+    parser.add_argument('--lr', type=float, default=.001)
+    parser.add_argument('--wd', type=float, default=0.0004)
     parser.add_argument('--warm_epoch', default=10, type=int)
     parser.add_argument('--epoches_decay', type=int, default=40)  # todo: sounds like a dumb idea
     parser.add_argument('--lr_decay_ratio', type=float, default=0.1)
@@ -84,14 +85,21 @@ if __name__ == '__main__':
                             )
 
     optimizer = torch.optim.AdamW(image_model.parameters(), lr=args.lr, weight_decay=args.wd)
-    scheduler_steplr = torch.optim.lr_scheduler.StepLR(optimizer, int(args.epoches_decay), gamma=0.1)
-    scheduler_warmup = GradualWarmupScheduler(optimizer,
-                                              multiplier=1,
-                                              total_epoch=args.warm_epoch,
-                                              after_scheduler=scheduler_steplr)
+    schedule = CosineLRScheduler(optimizer,
+                                 t_initial=args.num_epochs,
+                                 cycle_mul=1,
+                                 lr_min=1e-8,
+                                 cycle_decay=0.1,
+                                 warmup_lr_init=1e-6,
+                                 warmup_t=3,
+                                 cycle_limit=1,
+                                 t_in_epochs=True,
+                                 noise_range_t=None,
+                                 )
     mse = nn.MSELoss()
     identity = nn.Identity()
     criterion = nn.TripletMarginLoss(margin=1.0, p=2)
+    contrastive = ContrastiveLoss()
     train_steps = 0
     test_steps = 0
     writer = SummaryWriter(log_dir=f'{args.log_dir}/{folder}')
@@ -113,7 +121,7 @@ if __name__ == '__main__':
             writer.add_scalar('Loss/train', loss.cpu().detach().numpy(), train_steps)
             train_steps += 1
             progbar.update(idx + 1, printlog)
-        scheduler_warmup.step()
+        schedule.step(epoch + 1)
         progbar = tf.keras.utils.Progbar(len(val_loader))
         query_feature = torch.empty((0, text_model[1].pooling_output_dimension), dtype=torch.float32)
         query_label = torch.empty((0, ), dtype=torch.int)
@@ -125,7 +133,7 @@ if __name__ == '__main__':
                 image = image.to(args.device)
                 text = text.to(args.device)
                 image_feature = image_model(image)
-                loss = criterion([text, image_feature], (labels[0] == labels[1]).view(-1).to(args.device).float())
+                loss = contrastive([text, image_feature], (labels[0] == labels[1]).view(-1).to(args.device).float())
                 printlog = [('val_loss', loss.cpu().detach().numpy()),
                             ]
                 progbar.update(idx + 1, printlog)
