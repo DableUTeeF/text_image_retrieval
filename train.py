@@ -7,7 +7,7 @@ from utils import GradualWarmupScheduler, test_map
 import tensorflow as tf
 from torch.utils.data import DataLoader
 from torch import nn
-import pandas as pd
+from torch.utils.tensorboard import SummaryWriter
 import os
 
 
@@ -92,23 +92,9 @@ if __name__ == '__main__':
     mse = nn.MSELoss()
     identity = nn.Identity()
     criterion = ContrastiveLoss()
-    train_log = {  # todo: really need to improve logging
-        'epoch': [],
-        'loss': []
-    }
-    test_log = {
-        'epoch': [],
-        'loss': []
-    }
-    on_epoch_log = {
-        'epoch': [],
-        'ap': [],
-        'cm0': [],
-        'cm4': [],
-        'cm9': [],
-    }
     train_steps = 0
     test_steps = 0
+    writer = SummaryWriter(log_dir=f'{args.log_dir}/{folder}')
     for epoch in range(args.num_epochs):
         print('Epoch:', epoch + 1)
         progbar = tf.keras.utils.Progbar(len(train_loader))
@@ -123,16 +109,16 @@ if __name__ == '__main__':
             optimizer.step()
             printlog = [('loss', loss.cpu().detach().numpy()),
                         ]
-            train_log['epoch'].append(epoch)
-            train_log['loss'].append(loss.cpu().detach().numpy())
+            writer.add_scalar('Loss/train', loss.cpu().detach().numpy(), train_steps)
+            train_steps += 1
             progbar.update(idx + 1, printlog)
         pd.DataFrame(train_log).to_csv(f'{args.log_dir}/{folder}/train.csv', index=True)
         scheduler_warmup.step()
         progbar = tf.keras.utils.Progbar(len(val_loader))
-        query_feature = torch.empty((1, text_model[1].pooling_output_dimension), dtype=torch.float32)
-        query_label = torch.empty((1, ), dtype=torch.int)
-        gallery_feature = torch.empty((1, text_model[1].pooling_output_dimension), dtype=torch.float32)
-        gallery_label = torch.empty((1, ), dtype=torch.int)
+        query_feature = torch.empty((0, text_model[1].pooling_output_dimension), dtype=torch.float32)
+        query_label = torch.empty((0, ), dtype=torch.int)
+        gallery_feature = torch.empty((0, text_model[1].pooling_output_dimension), dtype=torch.float32)
+        gallery_label = torch.empty((0, ), dtype=torch.int)
         with torch.no_grad():
             image_model.eval()
             for idx, (image, text, labels) in enumerate(val_loader):
@@ -143,16 +129,14 @@ if __name__ == '__main__':
                 printlog = [('val_loss', loss.cpu().detach().numpy()),
                             ]
                 progbar.update(idx + 1, printlog)
-                query_feature = torch.stack((query_feature, text.cpu()))
-                gallery_feature = torch.stack((gallery_feature, image_feature.cpu()))
-                query_label = torch.stack((query_label, labels[1]))
-                gallery_label = torch.stack((gallery_label, labels[0]))
-                test_log['epoch'].append(epoch)
-                test_log['loss'].append(loss.cpu().detach().numpy())
+                query_feature = torch.cat((query_feature, text.cpu()))
+                gallery_feature = torch.cat((gallery_feature, image_feature.cpu()))
+                query_label = torch.cat((query_label, labels[1]))
+                gallery_label = torch.cat((gallery_label, labels[0]))
+                writer.add_scalar('Loss/test', loss.cpu().detach().numpy(), test_steps)
+                test_steps += 1
         cm0, cm4, cm9, ap = test_map(query_feature, query_label, gallery_feature, gallery_label)
-        on_epoch_log['cm4'].append(cm4)
-        on_epoch_log['cm0'].append(cm0)
-        on_epoch_log['cm9'].append(cm9)
-        on_epoch_log['ap'].append(ap)
-        pd.DataFrame(test_log).to_csv(f'{args.log_dir}/{folder}/test.csv', index=True)
-        pd.DataFrame(on_epoch_log).to_csv(f'{args.log_dir}/{folder}/epochs.csv', index=True)
+        writer.add_scalar('Metrics/r@1', cm0, test_steps)
+        writer.add_scalar('Metrics/r@5', cm4, test_steps)
+        writer.add_scalar('Metrics/r@10', cm9, test_steps)
+        writer.add_scalar('Metrics/ap', ap, test_steps)
