@@ -9,7 +9,7 @@ class ImageModel(nn.Module):
         hidden_size = hidden_size or txt_size
         self.backbone = focalnet_tiny_srf(pretrained=True)
         self.image_features = nn.Sequential(
-            nn.Linear(self.backbone.num_features * (w//32) * (h//32), hidden_size),
+            nn.Linear(self.backbone.num_features, hidden_size),
             nn.GELU(),
             nn.Linear(hidden_size, txt_size)
         )
@@ -22,6 +22,7 @@ class ImageModel(nn.Module):
         for layer in self.backbone.layers:
             x, H, W = layer(x, H, W)
         x = self.backbone.norm(x)  # B L C
+        x = self.backbone.avgpool(x.transpose(1, 2))  # B C 1
         x = self.image_features(x.view(x.size(0), -1))
         return x
 

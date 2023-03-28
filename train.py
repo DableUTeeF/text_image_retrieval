@@ -10,10 +10,25 @@ from torch import nn
 import pandas as pd
 import os
 
+
+class ContrastiveLoss(torch.nn.Module):
+    def __init__(self, margin=2.0):
+        super(ContrastiveLoss, self).__init__()
+        self.margin = margin
+
+    def forward(self, output, label):
+        output1, output2 = output
+        label = label.float()
+        euclidean_distance = torch.pairwise_distance(output1, output2)
+        loss_contrastive = torch.mean((1 - label) * torch.pow(euclidean_distance, 2) +
+                                      label * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
+        return loss_contrastive
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # hyperparameters
-    parser.add_argument('--batch_size', type=int, default=8)
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_epochs', type=int, default=80)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--log_dir', type=str, default='./log')
@@ -30,10 +45,12 @@ if __name__ == '__main__':
     # parser.add_argument('--img_model', type=str, default='focalnet_tiny_srf')
 
     # dataset
+    parser.add_argument("--text_vector_path", type=str, default="/media/palm/Data/tipcb/text_vectors")
     parser.add_argument("--image_root_path", type=str, default="/media/palm/BiggerData/caption/CUHK-PEDES/CUHK-PEDES/imgs")
     parser.add_argument("--json_path", type=str, default="/media/palm/BiggerData/caption/CUHK-PEDES/CUHK-PEDES/caption_all.json")
     parser.add_argument('--width', type=int, default=128)
     parser.add_argument('--height', type=int, default=384)
+    parser.add_argument('--regen', type=bool, default=False)
 
     args = parser.parse_args()
 
@@ -49,9 +66,8 @@ if __name__ == '__main__':
     image_model.to(args.device)
 
     train_list, val_list = split(args)
-
-    train_dataset = JSONDataset(args, train_list, train=True)  # args, data, regen, train
-    val_dataset = JSONDataset(args, val_list, train=False)
+    train_dataset = JSONDataset(args, train_list, text_model, regen=args.regen, train=True)  # args, data, regen, train
+    val_dataset = JSONDataset(args, val_list, text_model, regen=args.regen, train=False)
 
     train_dataset = SiameseDataset(train_dataset)  # todo: refactory nightmare
     val_dataset = SiameseDataset(val_dataset)
@@ -75,17 +91,14 @@ if __name__ == '__main__':
                                               after_scheduler=scheduler_steplr)
     mse = nn.MSELoss()
     identity = nn.Identity()
+    criterion = ContrastiveLoss()
     train_log = {  # todo: really need to improve logging
-        'step': [],
         'epoch': [],
-        'similarity': [],
-        'mse': []
+        'loss': []
     }
     test_log = {
-        'step': [],
         'epoch': [],
-        'similarity': [],
-        'mse': []
+        'loss': []
     }
     on_epoch_log = {
         'epoch': [],
@@ -102,57 +115,44 @@ if __name__ == '__main__':
         image_model.train()
         for idx, (image, text, labels) in enumerate(train_loader):
             image = image.to(args.device)
-            with torch.no_grad():
-                text_features = text_model.encode(text, convert_to_tensor=True)
+            text = text.to(args.device)
             image_feature = image_model(image)
-            similarity = identity(torch.cosine_similarity(text_features, image_feature))
-            loss = mse(similarity, (labels[0] == labels[1]).view(-1).to(args.device).float())
+            loss = criterion([text, image_feature], (labels[0] == labels[1]).view(-1).to(args.device).float())
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            printlog = [('similarity', similarity.cpu().detach().numpy()),
-                        ('mse', loss.cpu().detach().numpy()),
+            printlog = [('loss', loss.cpu().detach().numpy()),
                         ]
-            train_log['step'].append(train_steps)
             train_log['epoch'].append(epoch)
-            train_log['similarity'].append(similarity.cpu().detach().numpy())
-            train_log['mse'].append(loss.cpu().detach().numpy())
-            train_steps += 1
+            train_log['loss'].append(loss.cpu().detach().numpy())
             progbar.update(idx + 1, printlog)
-        pd.DataFrame(train_log).to_csv(f'{args.log_dir}/{folder}/train.csv', index=False)
+        pd.DataFrame(train_log).to_csv(f'{args.log_dir}/{folder}/train.csv', index=True)
         scheduler_warmup.step()
         progbar = tf.keras.utils.Progbar(len(val_loader))
-        query_feature = []
-        query_label = []
-        gallery_feature = []
-        gallery_label = []
+        query_feature = torch.empty((1, text_model[1].pooling_output_dimension), dtype=torch.float32)
+        query_label = torch.empty((1, ), dtype=torch.int)
+        gallery_feature = torch.empty((1, text_model[1].pooling_output_dimension), dtype=torch.float32)
+        gallery_label = torch.empty((1, ), dtype=torch.int)
         with torch.no_grad():
             image_model.eval()
             for idx, (image, text, labels) in enumerate(val_loader):
-                labels = labels.to(args.device)
                 image = image.to(args.device)
-                text_features = text_model.encode(text, convert_to_tensor=True)
+                text = text.to(args.device)
                 image_feature = image_model(image)
-                similarity = identity(torch.cosine_similarity(text_features, image_feature))
-                loss = mse(similarity, (labels[0] == labels[1]).view(-1).to(args.device).float())
-                printlog = [('val_similarity', similarity.cpu().detach().numpy()),
-                            ('val_mse', loss.cpu().detach().numpy()),
+                loss = criterion([text, image_feature], (labels[0] == labels[1]).view(-1).to(args.device).float())
+                printlog = [('val_loss', loss.cpu().detach().numpy()),
                             ]
-                query_feature.append(text_features.cpu())
-                gallery_feature.append(image_feature.cpu())
-                query_label.append(labels[1])
-                gallery_label.append(labels[0])
                 progbar.update(idx + 1, printlog)
-                test_log['step'].append(test_steps)
+                query_feature = torch.stack((query_feature, text.cpu()))
+                gallery_feature = torch.stack((gallery_feature, image_feature.cpu()))
+                query_label = torch.stack((query_label, labels[1]))
+                gallery_label = torch.stack((gallery_label, labels[0]))
                 test_log['epoch'].append(epoch)
-                test_log['similarity'].append(similarity.cpu().detach().numpy())
-                test_log['mse'].append(loss.cpu().detach().numpy())
-                test_steps += 1
+                test_log['loss'].append(loss.cpu().detach().numpy())
         cm0, cm4, cm9, ap = test_map(query_feature, query_label, gallery_feature, gallery_label)
-        on_epoch_log['epoch'].append(epoch)
         on_epoch_log['cm4'].append(cm4)
         on_epoch_log['cm0'].append(cm0)
         on_epoch_log['cm9'].append(cm9)
         on_epoch_log['ap'].append(ap)
-        pd.DataFrame(test_log).to_csv(f'{args.log_dir}/{folder}/test.csv', index=False)
-        pd.DataFrame(on_epoch_log).to_csv(f'{args.log_dir}/{folder}/epochs.csv', index=False)
+        pd.DataFrame(test_log).to_csv(f'{args.log_dir}/{folder}/test.csv', index=True)
+        pd.DataFrame(on_epoch_log).to_csv(f'{args.log_dir}/{folder}/epochs.csv', index=True)
