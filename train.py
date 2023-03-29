@@ -1,5 +1,5 @@
 from models.matching import ImageModel
-from datagen import JSONDataset, split, TripLetDataset, SiameseDataset
+from datagen import *
 import argparse
 from sentence_transformers import SentenceTransformer
 import torch
@@ -28,7 +28,7 @@ class ContrastiveLoss(nn.Module):
 
 
 class CMPMLoss(nn.Module):
-    def __init__(self, epsilon):
+    def __init__(self, epsilon=1e-8):
         super().__init__()
         self.epsilon = epsilon
 
@@ -47,7 +47,7 @@ class CMPMLoss(nn.Module):
         labels_mask_norm = labels_mask.float() / labels_mask.float().norm(dim=1)
 
         i2t_pred = F.softmax(image_proj_text, dim=1)
-        i2t_loss = i2t_pred * (F.log_softmax(image_proj_text, dim=1) - torch.log(labels_mask_norm + self.epsilon)) # (4)
+        i2t_loss = i2t_pred * (F.log_softmax(image_proj_text, dim=1) - torch.log(labels_mask_norm + self.epsilon))
         t2i_pred = F.softmax(text_proj_image, dim=1)
         t2i_loss = t2i_pred * (F.log_softmax(text_proj_image, dim=1) - torch.log(labels_mask_norm + self.epsilon))
 
@@ -99,7 +99,7 @@ if __name__ == '__main__':
     train_dataset = JSONDataset(args, train_list, text_model, regen=args.regen, train=True)  # args, data, regen, train
     val_dataset = JSONDataset(args, val_list, text_model, regen=args.regen, train=False)
 
-    train_dataset = TripLetDataset(train_dataset)  # todo: refactory nightmare
+    train_dataset = CMPMDataset(train_dataset)
     val_dataset = SiameseDataset(val_dataset)
 
     train_loader = DataLoader(train_dataset,
@@ -127,7 +127,7 @@ if __name__ == '__main__':
                                  )
     mse = nn.MSELoss()
     identity = nn.Identity()
-    criterion = nn.TripletMarginLoss(margin=1.0, p=2)
+    criterion = CMPMLoss()
     contrastive = ContrastiveLoss()
     train_steps = 0
     test_steps = 0
@@ -136,12 +136,12 @@ if __name__ == '__main__':
         print('Epoch:', epoch + 1)
         progbar = tf.keras.utils.Progbar(len(train_loader))
         image_model.train()
-        for idx, (image, positive, negative) in enumerate(train_loader):
+        for idx, (image, text, labels) in enumerate(train_loader):
             image = image.to(args.device)
-            positive = positive.to(args.device)
-            negative = negative.to(args.device)
+            text = text.to(args.device)
+            labels = labels.to(args.device)
             image_feature = image_model(image)
-            loss = criterion(image_feature, positive, negative)
+            loss = criterion(image_feature, text, labels)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -164,7 +164,7 @@ if __name__ == '__main__':
                 text = text.to(args.device)
                 image_feature = image_model(image)
                 # todo: distance here should be labels[0] != labels[1]
-                loss = contrastive([text, image_feature], (labels[0] != labels[1]).view(-1).to(args.device).float())
+                loss = contrastive([text, image_feature], (labels[0] == labels[1]).view(-1).to(args.device).float())
                 printlog = [('val_loss', loss.cpu().detach().numpy()),
                             ]
                 progbar.update(idx + 1, printlog)

@@ -10,9 +10,11 @@ import torch
 import pandas as pd
 import tensorflow as tf
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.data.transforms import _str_to_pil_interpolation as _pil_interp
+from sentence_transformers import InputExample
 from timm.data import create_transform
 
+__all__ = ['split', 'JSONDataset', 'SiameseDataset',
+           'CMPMDataset', 'TripLetDataset', 'SentenseDataset']
 
 def split(args):
     with open(args.json_path, "rb") as f:
@@ -121,6 +123,51 @@ class SiameseDataset(Dataset):
         if random.random() > 0.5:
             _, text, label_2 = self.data[random.randint(0, len(self.data)-1)]
         return img, text, (label_1, label_2)
+
+
+class SentenseDataset(Dataset):
+    def __init__(self, args, data, tokenizer):
+        data = functools.reduce(lambda a, b: a + b, data)
+        self.args = args
+        self.data = []
+        for i, item in enumerate(data):
+            tokens = tokenizer.encode(item["caption"])
+            if len(tokens) <= 77:
+                self.data.append(item)
+
+    def __len__(self):
+        return len(self.data)
+
+    @staticmethod
+    def collate_fn(batch):
+        engs = []
+        thas = []
+        labels = []
+        for sample in batch:
+            eng, tha = sample.texts
+            engs.append(eng)
+            thas.append(tha)
+            labels.append(sample.label)
+        return engs, thas, torch.tensor(labels)
+
+    def __getitem__(self, index):
+        item = self.data[index]  # img, text, label_1
+        text = item["caption"]
+        label_1 = item["id"]
+        img = Image.open(os.path.join(self.args.image_root_path, item["file_path"]))
+        label_2 = label_1
+        if random.random() > 0.5:
+            item2 = self.data[random.randint(0, len(self.data)-1)]
+            label_2 = item2["id"]
+            text = item2["caption"]
+        label = 0.8 if label_2 == label_1 else 0.3
+        return InputExample(texts=[img, text], label=label)
+
+
+class CMPMDataset(SiameseDataset):
+    def __getitem__(self, index):
+        img, text, label_1 = self.data[index]
+        return img, text, label_1
 
 
 class TripLetDataset(SiameseDataset):
