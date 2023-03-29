@@ -10,9 +10,10 @@ from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 import os
 from timm.scheduler.cosine_lr import CosineLRScheduler
+from torch.nn import functional as F
 
 
-class ContrastiveLoss(torch.nn.Module):
+class ContrastiveLoss(nn.Module):
     def __init__(self, margin=2.0):
         super(ContrastiveLoss, self).__init__()
         self.margin = margin
@@ -26,6 +27,35 @@ class ContrastiveLoss(torch.nn.Module):
         return loss_contrastive
 
 
+class CMPMLoss(nn.Module):
+    def __init__(self, epsilon):
+        super().__init__()
+        self.epsilon = epsilon
+
+    def forward(self, image_embeddings, text_embeddings, labels):
+        batch_size = image_embeddings.shape[0]
+        labels_reshape = torch.reshape(labels, (batch_size, 1))
+        labels_dist = labels_reshape - labels_reshape.t()
+        labels_mask = (labels_dist == 0)
+
+        image_norm = image_embeddings / image_embeddings.norm(dim=1, keepdim=True)
+        text_norm = text_embeddings / text_embeddings.norm(dim=1, keepdim=True)
+        image_proj_text = torch.matmul(image_embeddings, text_norm.t())
+        text_proj_image = torch.matmul(text_embeddings, image_norm.t())
+
+        # normalize the true matching distribution
+        labels_mask_norm = labels_mask.float() / labels_mask.float().norm(dim=1)
+
+        i2t_pred = F.softmax(image_proj_text, dim=1)
+        i2t_loss = i2t_pred * (F.log_softmax(image_proj_text, dim=1) - torch.log(labels_mask_norm + self.epsilon)) # (4)
+        t2i_pred = F.softmax(text_proj_image, dim=1)
+        t2i_loss = t2i_pred * (F.log_softmax(text_proj_image, dim=1) - torch.log(labels_mask_norm + self.epsilon))
+
+        cmpm_loss = torch.mean(torch.sum(i2t_loss, dim=1)) + torch.mean(torch.sum(t2i_loss, dim=1))
+
+        return cmpm_loss
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # hyperparameters
@@ -35,11 +65,10 @@ if __name__ == '__main__':
     parser.add_argument('--log_dir', type=str, default='./log')
 
     # optimizer
-    parser.add_argument('--lr', type=float, default=.001)
+    parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--wd', type=float, default=0.0004)
+    parser.add_argument('--warm_lr_init', type=float, default=1e-6)
     parser.add_argument('--warm_epoch', default=10, type=int)
-    parser.add_argument('--epoches_decay', type=int, default=40)  # todo: sounds like a dumb idea
-    parser.add_argument('--lr_decay_ratio', type=float, default=0.1)
 
     # models
     parser.add_argument('--text_model', type=str, default='all-MiniLM-L6-v2')
@@ -90,8 +119,8 @@ if __name__ == '__main__':
                                  cycle_mul=1,
                                  lr_min=1e-8,
                                  cycle_decay=0.1,
-                                 warmup_lr_init=1e-6,
-                                 warmup_t=3,
+                                 warmup_lr_init=args.warm_lr_init,
+                                 warmup_t=args.warm_epoch,
                                  cycle_limit=1,
                                  t_in_epochs=True,
                                  noise_range_t=None,
@@ -121,6 +150,7 @@ if __name__ == '__main__':
             writer.add_scalar('Loss/train', loss.cpu().detach().numpy(), train_steps)
             train_steps += 1
             progbar.update(idx + 1, printlog)
+        # writer.add_scalar('OPtimizer/LR', schedule._get_lr(epoch+1), epoch)
         schedule.step(epoch + 1)
         progbar = tf.keras.utils.Progbar(len(val_loader))
         query_feature = torch.empty((0, text_model[1].pooling_output_dimension), dtype=torch.float32)
@@ -133,7 +163,8 @@ if __name__ == '__main__':
                 image = image.to(args.device)
                 text = text.to(args.device)
                 image_feature = image_model(image)
-                loss = contrastive([text, image_feature], (labels[0] == labels[1]).view(-1).to(args.device).float())
+                # todo: distance here should be labels[0] != labels[1]
+                loss = contrastive([text, image_feature], (labels[0] != labels[1]).view(-1).to(args.device).float())
                 printlog = [('val_loss', loss.cpu().detach().numpy()),
                             ]
                 progbar.update(idx + 1, printlog)
@@ -144,7 +175,7 @@ if __name__ == '__main__':
                 writer.add_scalar('Loss/test', loss.cpu().detach().numpy(), test_steps)
                 test_steps += 1
         cm0, cm4, cm9, ap = test_map(query_feature, query_label, gallery_feature, gallery_label)
-        writer.add_scalar('Metrics/r@1', cm0, test_steps)
-        writer.add_scalar('Metrics/r@5', cm4, test_steps)
-        writer.add_scalar('Metrics/r@10', cm9, test_steps)
-        writer.add_scalar('Metrics/ap', ap, test_steps)
+        writer.add_scalar('Metrics/r@1', cm0, epoch)
+        writer.add_scalar('Metrics/r@5', cm4, epoch)
+        writer.add_scalar('Metrics/r@10', cm9, epoch)
+        writer.add_scalar('Metrics/ap', ap, epoch)
