@@ -9,16 +9,16 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # hyperparameters
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--num_epochs', type=int, default=80)
+    parser.add_argument('--num_epochs', type=int, default=40)
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--log_dir', type=str, default='./log')
-    parser.add_argument('--output_path', type=str, default='/media/palm/Data/tipcb/checkpoint')
+    parser.add_argument('--output_path', type=str, default='/media/palm/Data/tipcb/checkpoint/encn')
 
     # optimizer
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--wd', type=float, default=0.0004)
     parser.add_argument('--warm_lr_init', type=float, default=1e-6)
-    parser.add_argument('--warm_epoch', default=10, type=int)
+    parser.add_argument('--warmup_steps', default=200, type=int)
 
     # models
     parser.add_argument('--model', type=str, default='clip-ViT-B-32')
@@ -26,7 +26,7 @@ if __name__ == '__main__':
     # dataset
     parser.add_argument("--text_vector_path", type=str, default="/media/palm/Data/tipcb/text_vectors")
     parser.add_argument("--image_root_path", type=str, default="/media/palm/BiggerData/caption/CUHK-PEDES/CUHK-PEDES/imgs")
-    parser.add_argument("--json_path", type=str, default="/media/palm/BiggerData/caption/CUHK-PEDES/CUHK-PEDES/caption_all.json")
+    parser.add_argument("--json_path", type=str, default="/media/palm/BiggerData/caption/CUHK-PEDES/CUHK-PEDES/caption_all_encn.json")
     parser.add_argument('--width', type=int, default=128)
     parser.add_argument('--height', type=int, default=384)
     parser.add_argument('--regen', type=bool, default=False)
@@ -42,11 +42,11 @@ if __name__ == '__main__':
 
 
     # Define your train dataset, the dataloader and the train loss
-    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=16, collate_fn=SentenseDataset.collate_fn)
+    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=args.batch_size, collate_fn=SentenseDataset.collate_fn)
     train_loss = losses.CosineSimilarityLoss(model)
     evaluator = evaluation.EmbeddingSimilarityEvaluator.from_input_examples(val_dataset)
 
     # Tune the model
-    model.fit(train_objectives=[(train_dataloader, train_loss)], epochs=10, warmup_steps=100,
-              evaluator=evaluator,
+    model.fit(train_objectives=[(train_dataloader, train_loss)], epochs=args.num_epochs,
+              warmup_steps=args.warmup_steps, evaluator=evaluator,
               output_path=args.output_path)

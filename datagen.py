@@ -132,8 +132,9 @@ class SentenseDataset(Dataset):
         self.data = []
         for i, item in enumerate(data):
             tokens = tokenizer.encode(item["caption"])
-            if len(tokens) <= 77:
-                self.data.append(item)
+            if len(tokens) > 77:
+                item["caption"] = tokenizer.decode(tokens[1:75])
+            self.data.append(item)
 
     def __len__(self):
         return len(self.data)
