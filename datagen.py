@@ -165,6 +165,32 @@ class SentenseDataset(Dataset):
         return InputExample(texts=[img, text], label=label)
 
 
+class ClipDataset(Dataset):
+    def __init__(self, args, data, tokenizer, transform, max_len):
+        self.data = functools.reduce(lambda a, b: a + b, data)
+        self.transform = transform
+        self.max_len = max_len
+        self.tokenizer = tokenizer
+        self.args = args
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, index):
+        item = self.data[index]  # img, text, label_1
+        text = item["caption"]
+        text = self.tokenizer(
+            text,
+            max_length=self.max_len,
+            truncation=True,
+            padding='max_length',
+            return_tensors="pt"
+        )
+        img = Image.open(os.path.join(self.args.image_root_path, item["file_path"]))
+        img = self.transform(img)
+        return img, text, item["id"]
+
+
 class CMPMDataset(SiameseDataset):
     def __getitem__(self, index):
         img, text, label_1 = self.data[index]
