@@ -129,5 +129,5 @@ def test_map(query_feature, query_label, gallery_feature, gallery_label):
         ap += ap_tmp
     CMC = CMC.float()
     CMC = CMC / len(query_label)
-    print('Rank@1:%f Rank@5:%f Rank@10:%f mAP:%f' % (CMC[0], CMC[4], CMC[9], ap / len(query_label)))
+    # print('Rank@1:%f Rank@5:%f Rank@10:%f mAP:%f' % (CMC[0], CMC[4], CMC[9], ap / len(query_label)))
     return CMC[0], CMC[4], CMC[9], ap / len(query_label)

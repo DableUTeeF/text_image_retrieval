@@ -1,4 +1,4 @@
-from models.clip import VisionEncoder, TextEncoder, clip_loss, metrics
+from models.clip import VisionEncoder, TextEncoder, clip_loss, metrics, ClipLoss
 from transformers import AutoTokenizer
 from datagen import ClipDataset, split, build_transform
 from torch.utils.data import DataLoader
@@ -18,7 +18,7 @@ class Args:
 
     epochs = 45
     warmup_epochs = 3
-    batch_size = 128
+    batch_size = 16
     wd = 0.05
     base_lr = 5e-4
     warmup_lr = 5e-7
@@ -29,7 +29,7 @@ class Args:
     device = 'cuda'
 
     json_path = '/media/palm/BiggerData/caption/CUHK-PEDES/CUHK-PEDES/caption_all.json'
-    output_path = '/media/palm/BiggerData/caption/cp/clip'
+    output_path = '/media/palm/Data/tipcb/checkpoint/clip/'
     image_root_path = '/media/palm/BiggerData/caption/CUHK-PEDES/CUHK-PEDES/imgs'
 
 
@@ -41,7 +41,7 @@ def common_step(images, text):
     caption_embed = caption_encoder(text)
     similarity = caption_embed @ image_embed.T
 
-    loss = clip_loss(similarity)
+    loss = criterion(image_embed, caption_embed, 1)
     img_acc, cap_acc = metrics(similarity)
     return loss, img_acc, cap_acc, image_embed, caption_embed
 
@@ -52,6 +52,7 @@ if __name__ == '__main__':
     vision_encoder = VisionEncoder(args.embed_dim).to(args.device)
     caption_encoder = TextEncoder(args.text_model, args.transformer_embed_dim, args.embed_dim).to(args.device)
     tokenizer = AutoTokenizer.from_pretrained(args.text_model)
+    criterion = ClipLoss().to(args.device)
 
     linear_scaled_lr = args.base_lr #* args.batch_size / 512.0
     linear_scaled_warmup_lr = args.warmup_lr #* args.batch_size / 512.0

@@ -19,7 +19,7 @@ if __name__ == '__main__':
     parser.add_argument('--dim', type=int, default=512)
 
     args = parser.parse_args()
-    model = SentenceTransformer('/media/palm/Data/tipcb/checkpoint')
+    model = SentenceTransformer('/media/palm/Data/tipcb/checkpoint/remove77')
     tokenizer = model._first_module().processor.tokenizer
 
     train_list, val_list = split(args)
@@ -45,5 +45,5 @@ if __name__ == '__main__':
         query_label = torch.cat((query_label, label))
         gallery_label = torch.cat((gallery_label, label))
     cm0, cm4, cm9, ap = test_map(query_feature, query_label, gallery_feature, gallery_label)
-    print(f'R@1{cm0}, R@5{cm4}, R@10{cm9}, MAP{ap}')
+    print(f'R@1: {cm0}, R@5: {cm4}, R@10: {cm9}, MAP: {ap}')
 
