@@ -108,8 +108,8 @@ def evaluate(qf, ql, gf, gl):
     score = score.numpy()  # todo: this is dumb, fix this later
     index = np.argsort(score)
     index = index[::-1]
-    gl = gl.cuda().data.cpu().numpy()
-    ql = ql.cuda().data.cpu().numpy()
+    gl = gl.data.cpu().numpy()
+    ql = ql.data.cpu().numpy()
     query_index = np.argwhere(gl == ql)
     CMC_tmp = compute_mAP(index, query_index)
     return CMC_tmp

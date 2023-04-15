@@ -1,9 +1,10 @@
+import os
+# os.environ["TOKENIZERS_PARALLELISM"] = "true"
 from sentence_transformers import SentenceTransformer, losses, evaluation
 from torch.utils.data import DataLoader
 from datagen import SentenseDataset, JSONDataset, split
 import argparse
 from PIL import Image
-import os
 import torch
 from utils import test_map
 import functools
@@ -49,16 +50,16 @@ if __name__ == '__main__':
     # Define the model. Either from scratch of by loading a pre-trained model
     parser = argparse.ArgumentParser()
     # hyperparameters
-    parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--num_epochs', type=int, default=45)
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--num_epochs', type=int, default=200)
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--output_path', type=str, default='checkpoint/remove77_2')
+    parser.add_argument('--output_path', type=str, default='checkpoint/remove77_cosine')
 
     # optimizer
-    parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--lr', type=float, default=5e-5)
     parser.add_argument('--wd', type=float, default=0.0004)
     parser.add_argument('--warm_lr_init', type=float, default=1e-6)
-    parser.add_argument('--warmup_steps', default=200, type=int)
+    parser.add_argument('--warmup_epochs', default=3, type=int)
 
     # models
     parser.add_argument('--model', type=str, default='clip-ViT-B-32')
@@ -83,12 +84,23 @@ if __name__ == '__main__':
     # val_dataset = SentenseDataset(args, val_list, tokenizer)
 
 
-    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=args.batch_size, collate_fn=SentenseDataset.collate_fn)
+    train_dataloader = DataLoader(train_dataset, 
+                                #   num_workers=2, 
+                                  shuffle=True, 
+                                  batch_size=args.batch_size, 
+                                  collate_fn=SentenseDataset.collate_fn
+                                  )
     train_loss = losses.CosineSimilarityLoss(model)
     # evaluator = evaluation.EmbeddingSimilarityEvaluator.from_input_examples(val_dataset)
     # writer = SummaryWriter(log_dir=f'{args.output_path}/log')
     evaluator = TIPCBEvaluator(val_list, writer=None)
 
-    model.fit(train_objectives=[(train_dataloader, train_loss)], epochs=args.num_epochs,
-              warmup_steps=args.warmup_steps, evaluator=evaluator,
-              output_path=args.output_path)
+    model.fit(train_objectives=[(train_dataloader, train_loss)], 
+              epochs=args.num_epochs,
+              warmup_steps=args.warmup_epochs*len(train_dataloader), 
+              evaluator=evaluator,
+              output_path=args.output_path, 
+            #   optimizer_params={'lr': args.lr},
+              scheduler='warmupcosine'
+            #   show_progress_bar=False
+              )
