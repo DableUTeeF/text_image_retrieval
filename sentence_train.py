@@ -50,10 +50,10 @@ if __name__ == '__main__':
     # Define the model. Either from scratch of by loading a pre-trained model
     parser = argparse.ArgumentParser()
     # hyperparameters
-    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--num_epochs', type=int, default=200)
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--output_path', type=str, default='checkpoint/remove77_cosine')
+    parser.add_argument('--output_path', type=str, default='checkpoint/vit_L_cosine')
 
     # optimizer
     parser.add_argument('--lr', type=float, default=5e-5)
@@ -62,7 +62,7 @@ if __name__ == '__main__':
     parser.add_argument('--warmup_epochs', default=3, type=int)
 
     # models
-    parser.add_argument('--model', type=str, default='clip-ViT-B-32')
+    parser.add_argument('--model', type=str, default='clip-ViT-L-14')
 
     # dataset
     parser.add_argument("--image_root_path", type=str, default="CUHK-PEDES/imgs")
